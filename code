@@ -1,0 +1,47 @@
+# Import necessary libraries
+import os
+import torch
+from transformers import AutoTokenizer, AutoModelForTokenClassification
+
+# Load bioBERT tokenizer and model
+tokenizer = AutoTokenizer.from_pretrained("monologg/biobert_v1.1_pubmed")
+model = AutoModelForTokenClassification.from_pretrained("monologg/biobert_v1.1_pubmed")
+
+# Set device to run the model on
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+# Define function to extract events from medical text
+def extract_events(text):
+    # Tokenize input text
+    tokens = tokenizer.encode(text, add_special_tokens=True)
+    # Convert tokens to tensor and move to device
+    tokens_tensor = torch.tensor([tokens]).to(device)
+    # Predict token labels with model
+    with torch.no_grad():
+        output = model(tokens_tensor)
+        label_indices = torch.argmax(output.logits, axis=2)
+    # Decode predicted labels and extract event spans
+    labels = [model.config.id2label[label_index] for label_index in label_indices[0].tolist()]
+    events = []
+    for i in range(len(labels)):
+        if labels[i].startswith("B-"):
+            event_type = labels[i][2:]
+            event_start = i
+            event_end = i
+            for j in range(i+1, len(labels)):
+                if labels[j] == "O":
+                    event_end = j-1
+                    break
+                elif labels[j].startswith("B-"):
+                    event_end = j-1
+                    break
+            event_span = (event_start, event_end)
+            events.append((event_type, event_span))
+    # Extract event text and return as list of tuples
+    event_texts = []
+    for event in events:
+        event_type, event_span = event
+        event_text = tokenizer.decode(tokens[event_span[0]:event_span[1]+1])
+        event_texts.append((event_type, event_text))
+    return event_texts
